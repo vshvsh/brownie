@@ -22,7 +22,7 @@ with open(requirements_filename, "r") as f:
     requirements = list(map(str.strip, f.read().split("\n")))[:-1]
 
 setup(
-    name="eth-brownie",
+    name="brownie",
     packages=find_packages(),
     version="1.15.0",  # don't change this manually, use bumpversion instead
     license="MIT",
