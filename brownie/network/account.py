@@ -214,8 +214,6 @@ class Accounts(metaclass=_Singleton):
 
 
         new_account = WalletConnectAccount(bridge_domain, key, topic)
-        time.sleep(10)
-        new_account.wait_for_account()
         self._accounts.append(new_account)
 
         return new_account
@@ -940,7 +938,7 @@ class WalletConnectAccount(_PrivateKeyAccount):
         self._key = key
         self._topic = topic
 
-        address = _wait_for_address()
+        address = self._wait_for_address()
 
         super().__init__(address)
 
