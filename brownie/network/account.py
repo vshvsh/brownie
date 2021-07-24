@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from getpass import getpass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib import parse
 
 import eth_account
 import eth_keys
@@ -177,6 +178,48 @@ class Accounts(metaclass=_Singleton):
         if count == 1:
             return new_accounts[0]
         return new_accounts
+
+
+    def wallet_connect(
+        self, bridge_domain: str = "relay.walletconnect.org"
+    ) -> "WalletConnectAccount":
+        """
+        Connects to a WalletConnect-enabled account.
+
+        Arguments
+        ---------
+        relay_uri : str
+            An uri of a preerred WalletConnect relay server
+        """
+
+        #random key
+        bridge = 'https://' + bridge_domain
+        key = '7be5ec77de87350bfd8f990a61e7a210958b8fee8d9f0acf59d4c17f3dfd7fec'
+        wc_qr_url_params = {
+            'bridge': bridge,
+            'key': key
+        }
+        qr_urlencode = parse.urlencode(wc_qr_url_params)
+
+        protocol = 'wc'
+        #random topic
+        topic = '289c1b5e-421c-4d73-a43f-e1f99b23ed56'
+        version = '1'
+        qr_data = {'data': f'{protocol}:{topic}@{version}?{qr_urlencode}'}
+        qr_data_encoded = parse.urlencode(qr_data)
+
+
+        qr_code_uri = f'https://api.qrserver.com/v1/create-qr-code/?size=300x300&{qr_data_encoded}'
+        print(f'Use the link to get QR code:\n{qr_code_uri}\n')
+
+
+        new_account = WalletConnectAccount(bridge_domain, key, topic)
+        time.sleep(10)
+        new_account.wait_for_account()
+        self._accounts.append(new_account)
+
+        return new_account
+
 
     def load(self, filename: str = None, password: str = None) -> Union[List, "LocalAccount"]:
         """
@@ -884,3 +927,55 @@ class ClefAccount(_PrivateKeyAccount):
         if "error" in response:
             raise ValueError(response["error"]["message"])
         return web3.eth.send_raw_transaction(response["result"]["raw"])
+
+
+class WalletConnectAccount(_PrivateKeyAccount):
+
+    """
+    Class for interacting with an Ethereum account where signing is handled via WalletConnect v1.
+    """
+    #bridge_domain, key, topic)
+    def __init__(self, bridge_domain: str, key: str, topic: str) -> None:
+        self._bridge_domain = bridge_domain
+        self._key = key
+        self._topic = topic
+
+        address = _wait_for_address()
+
+        super().__init__(address)
+
+
+    def _wait_for_address() -> str:
+        #todo: real walletconnect
+        time.sleep(10)
+        return '0xc4ad0ef33a0a4dda3461c479ccb6c36d1e4b7be4'
+
+    def _transact(self, tx: Dict, allow_revert: bool) -> None:
+        if allow_revert is None:
+            allow_revert = bool(CONFIG.network_type == "development")
+        if not allow_revert:
+            self._check_for_revert(tx)
+
+        formatters = {
+            "nonce": web3.toHex,
+            "gasPrice": web3.toHex,
+            "gas": web3.toHex,
+            "value": web3.toHex,
+            "chainId": web3.toHex,
+            "data": web3.toHex,
+            "from": to_address,
+        }
+        if "to" in tx:
+            formatters["to"] = to_address
+
+        tx["chainId"] = web3.chain_id
+        tx = apply_formatters_to_dict(formatters, tx)
+        response = self._make_request(tx)
+
+        if "error" in response:
+            raise ValueError(response["error"]["message"])
+        return web3.eth.send_raw_transaction(response["result"]["raw"])
+
+    def _make_request(tx: Dict) -> Dict:
+        #todo: real walletconnect
+        return {'error': 'not implemented'}
