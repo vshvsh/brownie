@@ -978,4 +978,4 @@ class WalletConnectAccount(_PrivateKeyAccount):
 
     def _make_request(tx: Dict) -> Dict:
         #todo: real walletconnect
-        return {'error': 'not implemented'}
+        return {'error': {'message': 'not implemented'}}
