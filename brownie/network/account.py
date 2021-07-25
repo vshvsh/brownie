@@ -4,6 +4,7 @@ import json
 import sys
 import threading
 import time
+import asyncio
 from collections.abc import Iterator
 from getpass import getpass
 from pathlib import Path
@@ -927,6 +928,17 @@ class ClefAccount(_PrivateKeyAccount):
         return web3.eth.send_raw_transaction(response["result"]["raw"])
 
 
+async def wc_connect_mock(bridge_domain: str, key: str, topic: str):
+    print("wc_connect_mock")
+    await asyncio.sleep(10)
+    return '0xc4ad0ef33a0a4dda3461c479ccb6c36d1e4b7be4'
+
+async def wc_get_signature_mock(tx: Dict):
+    print("wc_get_signature_mock")
+    await asyncio.sleep(10)
+    return {'error': {'message': 'not implemented'}}
+
+
 class WalletConnectAccount(_PrivateKeyAccount):
 
     """
@@ -943,10 +955,9 @@ class WalletConnectAccount(_PrivateKeyAccount):
         super().__init__(address)
 
 
-    def _wait_for_address() -> str:
+    def _wait_for_address(self) -> str:
         #todo: real walletconnect
-        time.sleep(10)
-        return '0xc4ad0ef33a0a4dda3461c479ccb6c36d1e4b7be4'
+        return asyncio.get_event_loop().run_until_complete(wc_connect_mock(self._bridge_domain, self._key, self._topic))
 
     def _transact(self, tx: Dict, allow_revert: bool) -> None:
         if allow_revert is None:
@@ -956,8 +967,6 @@ class WalletConnectAccount(_PrivateKeyAccount):
 
         formatters = {
             "nonce": web3.toHex,
-            "gasPrice": web3.toHex,
-            "gas": web3.toHex,
             "value": web3.toHex,
             "chainId": web3.toHex,
             "data": web3.toHex,
@@ -974,6 +983,7 @@ class WalletConnectAccount(_PrivateKeyAccount):
             raise ValueError(response["error"]["message"])
         return web3.eth.send_raw_transaction(response["result"]["raw"])
 
-    def _make_request(tx: Dict) -> Dict:
+    def _make_request(self, tx: Dict) -> Dict:
         #todo: real walletconnect
-        return {'error': {'message': 'not implemented'}}
+        return asyncio.get_event_loop().run_until_complete(wc_get_signature_mock(tx))
+        
