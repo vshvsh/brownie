@@ -939,6 +939,14 @@ def get_wc_session_request(rpc_id, peer_id, peer_meta, chain_id = 1):
         }]
     }
 
+def get_wc_send_tx(tx, rpc_id):
+    return {
+        'id': rpc_id,
+        'jsonrpc': '2.0',
+        'method': 'eth_sendTransaction',
+        'params': [tx]
+    }
+
 
 def get_qr_link(uri):
     qr_data = { 'data': uri }
@@ -1018,18 +1026,53 @@ async def wc_connect(websocket_future):
     ack_message = get_websocket_message(peer_id, 'ack', '')
     await websocket.send(json.dumps(ack_message))
 
+    time.sleep(2)
+
     return {
         'key': key,
         'rpc_id': rpc_id,
+        'peer_id': payload['result']['peerId'],
         'address': payload['result']['accounts'][0],
         'handshake_uuid': handshake_uuid
     }
+
+
+def get_pub_message(request, session_data):
+    wc_request_string = json.dumps(request)
+    print('wc_request_string', wc_request_string)
+
+    wc_request_str_bytes = b'' + bytearray(wc_request_string, 'utf8')
+
+    payload = walletconnect.encrypt(wc_request_str_bytes, session_data['key'])
+    payload['data'] = payload['data'].hex()
+    payload['hmac'] = payload['hmac'].hex()
+    payload['iv'] = payload['iv'].hex()
+    print('payload', payload)
+
+    return get_websocket_message(session_data['peer_id'], 'pub', json.dumps(payload))
 
 
 async def wc_get_signature(tx: Dict, websocket_future, session_data):
     print("wc_get_signature", tx)
 
     websocket = await websocket_future
+
+    rpc_id = session_data['rpc_id']
+    peer_id = session_data['peer_id']
+
+    print('tx', tx)
+
+    send_request = get_wc_send_tx(tx, rpc_id)
+    rpc_id = rpc_id + 1
+    print('send_request', send_request)
+
+    send_tx_message = get_pub_message(send_request, session_data)
+    print('send_tx_message', send_tx_message)
+
+    await websocket.send(json.dumps(send_tx_message))
+
+    resp = await websocket.recv()
+    print('resp:', resp)
 
     return {'error': {'message': 'not implemented'}}
 
