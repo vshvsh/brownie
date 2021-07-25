@@ -5,6 +5,8 @@ import sys
 import threading
 import time
 import asyncio
+import uuid
+import websockets
 from collections.abc import Iterator
 from getpass import getpass
 from pathlib import Path
@@ -193,28 +195,7 @@ class Accounts(metaclass=_Singleton):
             An uri of a preerred WalletConnect relay server
         """
 
-        #random key
-        bridge = 'https://' + bridge_domain
-        key = '7be5ec77de87350bfd8f990a61e7a210958b8fee8d9f0acf59d4c17f3dfd7fec'
-        wc_qr_url_params = {
-            'bridge': bridge,
-            'key': key
-        }
-        qr_urlencode = parse.urlencode(wc_qr_url_params)
-
-        protocol = 'wc'
-        #random topic
-        topic = '289c1b5e-421c-4d73-a43f-e1f99b23ed56'
-        version = '1'
-        qr_data = {'data': f'{protocol}:{topic}@{version}?{qr_urlencode}'}
-        qr_data_encoded = parse.urlencode(qr_data)
-
-
-        qr_code_uri = f'https://api.qrserver.com/v1/create-qr-code/?size=300x300&{qr_data_encoded}'
-        print(f'Use the link to get QR code:\n{qr_code_uri}\n')
-
-
-        new_account = WalletConnectAccount(bridge_domain, key, topic)
+        new_account = WalletConnectAccount('wss://uniswap.bridge.walletconnect.org/?env=browser&host=app.uniswap.org&protocol=wc&version=1')
         self._accounts.append(new_account)
 
         return new_account
@@ -939,25 +920,153 @@ async def wc_get_signature_mock(tx: Dict):
     return {'error': {'message': 'not implemented'}}
 
 
+def generate_uuid():
+    return str(uuid.uuid4())
+
+
+def get_displayed_uri(topic, uri, key, version = 1):
+    encoded_uri = parse.quote(uri, safe='')
+    return f'wc:{topic}@{version}?bridge={uri}&key={key}'
+
+
+def get_websocket_message(topic, topic_type, payload, silent = True):
+    return {
+        'topic': topic,
+        'type': topic_type,
+        'payload': payload,
+        'silent': silent
+    }
+
+
+def get_wc_session_request(rpc_id, peer_id, peer_meta, chain_id = 1):
+    return {
+        'id': rpc_id,
+        'jsonrpc': '2.0',
+        'method': 'wc_sessionRequest',
+        'params': [{
+            'peerId': peer_id,
+            'peerMeta': peer_meta,
+            'chainId': chain_id
+        }]
+    }
+
+
+def decode_message_payload(payload):
+    parsed_json = json.loads(payload)
+
+    data = parsed_json['data']
+    hmac = parsed_json['hmac']
+    iv = parsed_json['iv']
+
+    return {
+        'some': data
+    }
+
+
+def get_qr_link(uri):
+    qr_data = { 'data': uri }
+    qr_data_encoded = parse.urlencode(qr_data)
+    return f'https://api.qrserver.com/v1/create-qr-code/?size=300x300&{qr_data_encoded}'
+
+
+async def wc_connect(websocket_future):
+    websocket = await websocket_future
+
+    rpc_id = 0
+    peer_id = generate_uuid()
+    handshake_uuid = generate_uuid()
+
+    key = walletconnect.generate_key()
+    hex_key = key.hex()
+
+    peer_meta = {
+        'description': 'brownie app',
+        'name': 'brownie app',
+        'icons': [],
+    }
+
+    url_encoded = parse.quote('https://uniswap.bridge.walletconnect.org', safe='')
+    wc_uri = get_displayed_uri(handshake_uuid, url_encoded, hex_key)
+
+    print('rpc_id:', rpc_id)
+    print('peer_id:', peer_id)
+    print('handshake_uuid:', handshake_uuid)
+    # print('key:', hex_key)
+    print('peer_meta:', peer_meta)
+    print('wc_uri:', wc_uri)
+    print('get_qr_link:', get_qr_link(wc_uri))
+
+    wc_request = get_wc_session_request(rpc_id, peer_id, peer_meta)
+    rpc_id = rpc_id + 1
+
+    wc_request_string = json.dumps(wc_request)
+    wc_request_str_bytes = b'' + bytearray(wc_request_string, 'utf8')
+
+    payload = walletconnect.encrypt(wc_request_str_bytes, key)
+
+    payload['data'] = payload['data'].hex()
+    payload['hmac'] = payload['hmac'].hex()
+    payload['iv'] = payload['iv'].hex()
+
+    initial_message = get_websocket_message(handshake_uuid, 'pub', json.dumps(payload))
+    subscribe_message = get_websocket_message(peer_id, 'sub', '')
+
+    print('wc_request message', json.dumps(initial_message))
+    print('sub', json.dumps(subscribe_message))
+
+    await websocket.send(json.dumps(initial_message))
+    await websocket.send(json.dumps(subscribe_message))
+
+    resp = await websocket.recv()
+    resp_data = json.loads(str(resp))
+
+    # print(f'< {resp}')
+    print('resp_data', resp_data)
+    payload_enc = json.loads(str(resp_data['payload']))
+
+    print('payload_enc', payload_enc)
+
+    payload_bin = walletconnect.decrypt(
+        b'' + bytearray.fromhex(payload_enc['data']),
+        b'' + bytearray.fromhex(payload_enc['iv']),
+        b'' + bytearray.fromhex(payload_enc['hmac']),
+        key
+    )
+
+    payload = json.loads(payload_bin.decode('utf-8'))
+
+    print('payload', payload)
+    print('address', payload['result']['accounts'][0])
+
+    ack_message = get_websocket_message(peer_id, 'ack', '')
+    await websocket.send(json.dumps(ack_message))
+
+    return {
+        'key': key,
+        'rpc_id': rpc_id,
+        'address': payload['result']['accounts'][0],
+        'handshake_uuid': handshake_uuid
+    }
+
+
 class WalletConnectAccount(_PrivateKeyAccount):
 
     """
     Class for interacting with an Ethereum account where signing is handled via WalletConnect v1.
     """
-    #bridge_domain, key, topic)
-    def __init__(self, bridge_domain: str, key: str, topic: str) -> None:
-        self._bridge_domain = bridge_domain
-        self._key = key
-        self._topic = topic
-
-        address = self._wait_for_address()
-
-        super().__init__(address)
+    #bridge_uri, key, topic)
+    def __init__(self, bridge_uri: str) -> None:
+        self._bridge_uri = bridge_uri
+        self._session_data = self._connect()
+        print('self._session_data', self._session_data)
+        super().__init__(self._session_data['address'])
 
 
-    def _wait_for_address(self) -> str:
-        #todo: real walletconnect
-        return asyncio.get_event_loop().run_until_complete(wc_connect_mock(self._bridge_domain, self._key, self._topic))
+    def _connect(self):
+        websocket = websockets.connect(self._bridge_uri)
+        self._websocket = websocket
+        return asyncio.get_event_loop().run_until_complete(wc_connect(websocket))
+
 
     def _transact(self, tx: Dict, allow_revert: bool) -> None:
         if allow_revert is None:
