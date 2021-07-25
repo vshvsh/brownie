@@ -909,17 +909,6 @@ class ClefAccount(_PrivateKeyAccount):
         return web3.eth.send_raw_transaction(response["result"]["raw"])
 
 
-async def wc_connect_mock(bridge_domain: str, key: str, topic: str):
-    print("wc_connect_mock")
-    await asyncio.sleep(10)
-    return '0xc4ad0ef33a0a4dda3461c479ccb6c36d1e4b7be4'
-
-async def wc_get_signature_mock(tx: Dict):
-    print("wc_get_signature_mock")
-    await asyncio.sleep(10)
-    return {'error': {'message': 'not implemented'}}
-
-
 def generate_uuid():
     return str(uuid.uuid4())
 
@@ -948,18 +937,6 @@ def get_wc_session_request(rpc_id, peer_id, peer_meta, chain_id = 1):
             'peerMeta': peer_meta,
             'chainId': chain_id
         }]
-    }
-
-
-def decode_message_payload(payload):
-    parsed_json = json.loads(payload)
-
-    data = parsed_json['data']
-    hmac = parsed_json['hmac']
-    iv = parsed_json['iv']
-
-    return {
-        'some': data
     }
 
 
@@ -1049,6 +1026,14 @@ async def wc_connect(websocket_future):
     }
 
 
+async def wc_get_signature(tx: Dict, websocket_future, session_data):
+    print("wc_get_signature", tx)
+
+    websocket = await websocket_future
+
+    return {'error': {'message': 'not implemented'}}
+
+
 class WalletConnectAccount(_PrivateKeyAccount):
 
     """
@@ -1093,6 +1078,7 @@ class WalletConnectAccount(_PrivateKeyAccount):
         return web3.eth.send_raw_transaction(response["result"]["raw"])
 
     def _make_request(self, tx: Dict) -> Dict:
-        #todo: real walletconnect
-        return asyncio.get_event_loop().run_until_complete(wc_get_signature_mock(tx))
+        return asyncio.get_event_loop().run_until_complete(
+            wc_get_signature(tx, self._websocket, self._session_data)
+        )
         
