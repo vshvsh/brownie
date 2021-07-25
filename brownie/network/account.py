@@ -31,7 +31,7 @@ from brownie.exceptions import (
     UnknownAccount,
     VirtualMachineError,
 )
-from brownie.utils import color
+from brownie.utils import color, walletconnect
 
 from .gas.bases import GasABC
 from .rpc import Rpc
