@@ -954,6 +954,23 @@ def get_qr_link(uri):
     return f'https://api.qrserver.com/v1/create-qr-code/?size=300x300&{qr_data_encoded}'
 
 
+def decrypt_resp_payload(raw_resp, key):
+    print(f'< {raw_resp}')
+    resp_data = json.loads(str(raw_resp))
+    payload_enc = json.loads(str(resp_data['payload']))
+
+    print('payload_enc', payload_enc)
+
+    payload_bin = walletconnect.decrypt(
+        b'' + bytearray.fromhex(payload_enc['data']),
+        b'' + bytearray.fromhex(payload_enc['iv']),
+        b'' + bytearray.fromhex(payload_enc['hmac']),
+        key
+    )
+
+    return json.loads(payload_bin.decode('utf-8'))
+
+
 async def wc_connect(websocket_future):
     websocket = await websocket_future
 
@@ -1003,22 +1020,7 @@ async def wc_connect(websocket_future):
     await websocket.send(json.dumps(subscribe_message))
 
     resp = await websocket.recv()
-    resp_data = json.loads(str(resp))
-
-    # print(f'< {resp}')
-    print('resp_data', resp_data)
-    payload_enc = json.loads(str(resp_data['payload']))
-
-    print('payload_enc', payload_enc)
-
-    payload_bin = walletconnect.decrypt(
-        b'' + bytearray.fromhex(payload_enc['data']),
-        b'' + bytearray.fromhex(payload_enc['iv']),
-        b'' + bytearray.fromhex(payload_enc['hmac']),
-        key
-    )
-
-    payload = json.loads(payload_bin.decode('utf-8'))
+    payload = decrypt_resp_payload(resp, key)
 
     print('payload', payload)
     print('address', payload['result']['accounts'][0])
@@ -1026,18 +1028,20 @@ async def wc_connect(websocket_future):
     ack_message = get_websocket_message(peer_id, 'ack', '')
     await websocket.send(json.dumps(ack_message))
 
-    time.sleep(2)
+    time.sleep(0.3)
 
     return {
         'key': key,
         'rpc_id': rpc_id,
+        'my_peer_id': peer_id,
         'peer_id': payload['result']['peerId'],
         'address': payload['result']['accounts'][0],
-        'handshake_uuid': handshake_uuid
+        'handshake_uuid': handshake_uuid,
+        'websocket': websocket
     }
 
 
-def get_pub_message(request, session_data):
+def get_pub_message(request, session_data, silent = True):
     wc_request_string = json.dumps(request)
     print('wc_request_string', wc_request_string)
 
@@ -1049,32 +1053,31 @@ def get_pub_message(request, session_data):
     payload['iv'] = payload['iv'].hex()
     print('payload', payload)
 
-    return get_websocket_message(session_data['peer_id'], 'pub', json.dumps(payload))
+    return get_websocket_message(session_data['peer_id'], 'pub', json.dumps(payload), silent)
 
 
-async def wc_get_signature(tx: Dict, websocket_future, session_data):
-    print("wc_get_signature", tx)
+async def wc_transact(tx: Dict, websocket_future, session_data):
+    print("wc_transact", tx)
 
-    websocket = await websocket_future
-
+    websocket = session_data['websocket']
     rpc_id = session_data['rpc_id']
-    peer_id = session_data['peer_id']
 
     print('tx', tx)
 
     send_request = get_wc_send_tx(tx, rpc_id)
-    rpc_id = rpc_id + 1
     print('send_request', send_request)
 
-    send_tx_message = get_pub_message(send_request, session_data)
+    session_data['rpc_id'] = rpc_id + 1
+
+    send_tx_message = get_pub_message(send_request, session_data, False)
     print('send_tx_message', send_tx_message)
 
     await websocket.send(json.dumps(send_tx_message))
 
     resp = await websocket.recv()
-    print('resp:', resp)
+    print(f'< {resp}')
 
-    return {'error': {'message': 'not implemented'}}
+    return decrypt_resp_payload(resp, session_data['key'])
 
 
 class WalletConnectAccount(_PrivateKeyAccount):
@@ -1118,10 +1121,12 @@ class WalletConnectAccount(_PrivateKeyAccount):
 
         if "error" in response:
             raise ValueError(response["error"]["message"])
-        return web3.eth.send_raw_transaction(response["result"]["raw"])
+
+        return b'' + bytearray.fromhex(response['result'][2:])
+
 
     def _make_request(self, tx: Dict) -> Dict:
         return asyncio.get_event_loop().run_until_complete(
-            wc_get_signature(tx, self._websocket, self._session_data)
+            wc_transact(tx, self._websocket, self._session_data)
         )
         
